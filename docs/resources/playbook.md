@@ -13,14 +13,31 @@ Provides an Ansible playbook resource.
 ## Example Usage
 ```terraform
 resource "ansible_playbook" "playbook" {
-  playbook   = "playbook.yml"
-  name       = "host-1.example.com"
   replayable = true
-
-  extra_vars = {
-    var_a = "Some variable"
-    var_b = "Another variable"
-  }
+  playbook   = "playbook.yaml"
+  inventory_hosts = [{
+    name   = my_server.ipv4_address
+    groups = ["group_a"]
+    variables = yamlencode({
+      ansible_user = "admin"
+      var_a        = "Host specific variable"
+      var_b = [{
+        nested_object_property = "Works"
+      }]
+    })
+  }]
+  inventory_groups = [{
+    name = "group_parent"
+    children = [
+      "group_a",
+    ]
+    variables = yamlencode({
+      group_var_a = "Group variable"
+    })
+  }]
+  extra_vars = yamlencode({
+    ansible_config_file = "${path.module}/ansible.cfg"
+  })
 }
 ```
 
@@ -29,7 +46,7 @@ resource "ansible_playbook" "playbook" {
 
 ### Required
 
-- `name` (String) Name of the desired host on which the playbook will be executed.
+- `inventory_hosts` (Attributes List) (see [below for nested schema](#nestedatt--inventory_hosts))
 - `playbook` (String) Path to ansible playbook.
 
 ### Optional
@@ -37,34 +54,46 @@ resource "ansible_playbook" "playbook" {
 - `ansible_playbook_binary` (String) Path to ansible-playbook executable (binary).
 - `check_mode` (Boolean) If 'true', playbook execution won't make any changes but only change predictions will be made.
 - `diff_mode` (Boolean) If 'true', when changing (small) files and templates, differences in those files will be shown. Recommended usage with 'check_mode'.
-- `extra_vars` (Map of String) A map of additional variables as: { key-1 = value-1, key-2 = value-2, ... }.
+- `extra_vars` (String) A string of json or yaml encoded map of additional variables as: { var-1 = {key-1 = value-1, key-2 = value-2, ... }, ... }.
 - `force_handlers` (Boolean) If 'true', run handlers even if a task fails.
-- `groups` (List of String) List of desired groups of hosts on which the playbook will be executed.
 - `ignore_playbook_failure` (Boolean) This parameter is good for testing. Set to 'true' if the desired playbook is meant to fail, but still want the resource to run successfully.
-- `limit` (List of String) List of hosts to exclude from the playbook execution.
+- `inventory_groups` (Attributes List) (see [below for nested schema](#nestedatt--inventory_groups))
 - `replayable` (Boolean) If 'true', the playbook will be executed on every 'terraform apply' and with that, the resource will be recreated. If 'false', the playbook will be executed only on the first 'terraform apply'. Note, that if set to 'true', when doing 'terraform destroy', it might not show in the destroy output, even though the resource still gets destroyed.
 - `tags` (List of String) List of tags of plays and tasks to run.
-- `timeouts` (Block, Optional) (see [below for nested schema](#nestedblock--timeouts))
-- `var_files` (List of String) List of variable files.
-- `vault_files` (List of String) List of vault files.
-- `vault_id` (String) ID of the desired vault(s).
-- `vault_password_file` (String) Path to a vault password file.
 - `verbosity` (Number) A verbosity level between 0 and 6. Set ansible 'verbose' parameter, which causes Ansible to print more debug messages. The higher the 'verbosity', the more debug details will be printed.
 
 ### Read-Only
 
 - `ansible_playbook_stderr` (String) An ansible-playbook CLI stderr output.
 - `ansible_playbook_stdout` (String) An ansible-playbook CLI stdout output.
-- `args` (List of String) Used to build arguments to run Ansible playbook with.
+- `cmd` (String) The command used to run ansible-playbook
 - `id` (String) The ID of this resource.
-- `temp_inventory_file` (String) Path to created temporary inventory file.
+- `temp_inventory_dir` (String) Path to created temporary inventory dir.
 
-<a id="nestedblock--timeouts"></a>
-### Nested Schema for `timeouts`
+<a id="nestedatt--inventory_hosts"></a>
+### Nested Schema for `inventory_hosts`
+
+Required:
+
+- `name` (String) Name of the host.
 
 Optional:
 
-- `create` (String)
+- `groups` (List of String) List of group names.
+- `variables` (String) yaml encoded map of variables.
+
+
+<a id="nestedatt--inventory_groups"></a>
+### Nested Schema for `inventory_groups`
+
+Required:
+
+- `name` (String) Name of the host.
+
+Optional:
+
+- `children` (List of String) List of group names.
+- `variables` (String) yaml encoded map of variables.
 
 
 

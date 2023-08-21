@@ -1,15 +1,12 @@
 # Terraform Provider for Ansible
 
-The Terraform Provider for Ansible provides a more straightforward and robust means of executing Ansible automation from Terraform than local-exec. Paired with the inventory plugin in [the Ansible cloud.terraform collection](https://github.com/ansible-collections/cloud.terraform), users can run Ansible playbooks and roles on infrastructure provisioned by Terraform. The provider also includes integrated ansible-vault support. 
+This started as a fork of the [official Ansible Terraform Provider](https://github.com/ansible/terraform-provider-ansible) that ended up in a almost full rewrite for my use case:
 
-This provider can be [found in the Terraform Registry here](https://registry.terraform.io/providers/ansible/ansible/latest).
+- Run an Ansible Playbook for many hosts that were created in Terraform and run it from Terraform
 
-For more details on using Terraform and Ansible together see these blog posts:
+The Terraform Provider for Ansible provides a straightforward way to run an Ansible Playbook while having the Ansible Inventory provided by Terraform.
 
-* [Terraforming clouds with Ansible](https://www.ansible.com/blog/terraforming-clouds-with-ansible)
-* [Walking on Clouds with Ansible](https://www.ansible.com/blog/walking-on-clouds-with-ansible)
-* [Providing Terraform with that Ansible Magic](https://www.ansible.com/blog/providing-terraform-with-that-ansible-magic)
-
+This provider can be [found in the Terraform Registry here](https://registry.terraform.io/providers/rubencosta/ansible/latest).
 
 ## Requirements
 
@@ -24,7 +21,7 @@ Run `make`. This will build a `terraform-provider-ansible` binary in the top lev
 ```
 provider_installation {
   dev_overrides {
-    "ansible/ansible" = "/path/to/project/root"
+    "rubencosta/ansible" = "/path/to/project/root"
   }
 
   direct {}
@@ -54,6 +51,7 @@ make test
 ```
 
 ### Examples
+
 The [examples](./examples/) subdirectory contains a usage example for this provider.
 
 ## Releasing
@@ -64,7 +62,7 @@ To release a new version of the provider:
 2. Run `go generate` to regenerate docs
 3. Commit changes
 4. Push a new tag (this should trigger an automated release process to the Terraform Registry)
-5. Verify the new version is published at https://registry.terraform.io/providers/ansible/ansible/latest
+5. Verify the new version is published at https://registry.terraform.io/providers/rubencosta/ansible/latest
 
 ## Licensing
 
