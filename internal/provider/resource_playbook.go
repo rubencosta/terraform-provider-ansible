@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
@@ -33,6 +34,7 @@ type playbook struct {
 	TempInventoryDir      types.String     `tfsdk:"temp_inventory_dir"`
 	AnsiblePlaybookStdout types.String     `tfsdk:"ansible_playbook_stdout"`
 	AnsiblePlaybookStderr types.String     `tfsdk:"ansible_playbook_stderr"`
+	Timeouts              timeouts.Value   `tfsdk:"timeouts"`
 }
 type inventoryHost struct {
 	Name      types.String   `tfsdk:"name"`
@@ -58,7 +60,7 @@ func (p *playbookResource) Metadata(_ context.Context, req resource.MetadataRequ
 }
 
 // Schema should return the schema for this resource.
-func (p *playbookResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (p *playbookResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			// Required settings
@@ -88,6 +90,13 @@ func (p *playbookResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 
 			// Optional settings
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{
+				Create:            true,
+				Update:            true,
+				CreateDescription: "Amount of time your playbook will run before timing out when being created. Defaults to 60m",
+				UpdateDescription: "Amount of time your playbook will run before timing out when being updated. Defaults to 60m",
+			}),
+
 			"ansible_playbook_binary": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
@@ -214,8 +223,19 @@ func (pr *playbookResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
+	createTimeout, diags := p.Timeouts.Create(ctx, 60*time.Minute)
+
+	resp.Diagnostics.Append(diags...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, createTimeout)
+	defer cancel()
+
 	p.ID = types.StringValue(time.Now().String())
-	p.runPlaybook()
+	p.runPlaybook(ctx)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &p)...)
 }
@@ -254,8 +274,19 @@ func (pr *playbookResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
+	updateTimeout, diags := p.Timeouts.Create(ctx, 60*time.Minute)
+
+	resp.Diagnostics.Append(diags...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
+	defer cancel()
+
 	p.ID = types.StringValue(time.Now().String())
-	p.runPlaybook()
+	p.runPlaybook(ctx)
 
 	// persist the values to state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &p)...)
@@ -273,7 +304,7 @@ func (pr *playbookResource) Delete(ctx context.Context, req resource.DeleteReque
 	RemoveDir(p.TempInventoryDir.ValueString())
 }
 
-func (p *playbook) runPlaybook() {
+func (p *playbook) runPlaybook(ctx context.Context) {
 	args := []string{}
 
 	if p.TempInventoryDir.IsNull() || p.TempInventoryDir.ValueString() == "" {
@@ -319,7 +350,7 @@ func (p *playbook) runPlaybook() {
 	log.Print("[ANSIBLE ARGS]:")
 	log.Print(args)
 
-	runAnsiblePlay := exec.Command(p.AnsiblePlaybookBinary.ValueString(), args...)
+	runAnsiblePlay := exec.CommandContext(ctx, p.AnsiblePlaybookBinary.ValueString(), args...)
 	p.Cmd = types.StringValue(runAnsiblePlay.String())
 	runAnsiblePlayOut, runAnsiblePlayErr := runAnsiblePlay.CombinedOutput()
 	p.AnsiblePlaybookStdout = types.StringValue(string(runAnsiblePlayOut))

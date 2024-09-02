@@ -60,6 +60,7 @@ resource "ansible_playbook" "playbook" {
 - `inventory_groups` (Attributes List) (see [below for nested schema](#nestedatt--inventory_groups))
 - `replayable` (Boolean) If 'true', the playbook will be executed on every 'terraform apply' and with that, the resource will be recreated. If 'false', the playbook will be executed only on the first 'terraform apply'. Note, that if set to 'true', when doing 'terraform destroy', it might not show in the destroy output, even though the resource still gets destroyed.
 - `tags` (List of String) List of tags of plays and tasks to run.
+- `timeouts` (Attributes) (see [below for nested schema](#nestedatt--timeouts))
 - `verbosity` (Number) A verbosity level between 0 and 6. Set ansible 'verbose' parameter, which causes Ansible to print more debug messages. The higher the 'verbosity', the more debug details will be printed.
 
 ### Read-Only
@@ -94,6 +95,15 @@ Optional:
 
 - `children` (List of String) List of group names.
 - `variables` (String) yaml encoded map of variables.
+
+
+<a id="nestedatt--timeouts"></a>
+### Nested Schema for `timeouts`
+
+Optional:
+
+- `create` (String) Amount of time your playbook will run before timing out when being created. Defaults to 60m
+- `update` (String) Amount of time your playbook will run before timing out when being updated. Defaults to 60m
 
 
 
