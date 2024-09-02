@@ -35,7 +35,7 @@ func buildPlaybookInventory(inventoryDest string, hosts []inventoryHost, groups 
 	for _, h := range hosts {
 		hostGroups := h.Groups
 		hostName := h.Name.ValueString()
-		if h.Groups == nil || len(h.Groups) == 0 {
+		if len(h.Groups) == 0 {
 			hostGroups = []types.String{types.StringValue(defaultHostGroup)}
 		}
 		for _, group := range hostGroups {
