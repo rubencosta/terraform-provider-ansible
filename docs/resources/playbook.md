@@ -25,6 +25,10 @@ resource "ansible_playbook" "playbook" {
         nested_object_property = "Works"
       }]
     })
+    # Never written to Terraform state. Requires Terraform >= 1.11.
+    variables_wo = yamlencode({
+      ansible_become_password = var.become_password
+    })
   }]
   inventory_groups = [{
     name = "group_parent"
@@ -34,9 +38,15 @@ resource "ansible_playbook" "playbook" {
     variables = yamlencode({
       group_var_a = "Group variable"
     })
+    variables_wo = yamlencode({
+      vault_token = var.vault_token
+    })
   }]
   extra_vars = yamlencode({
     ansible_config_file = "${path.module}/ansible.cfg"
+  })
+  extra_vars_wo = yamlencode({
+    api_token = var.api_token
   })
 }
 ```
@@ -51,10 +61,13 @@ resource "ansible_playbook" "playbook" {
 
 ### Optional
 
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
 - `ansible_playbook_binary` (String) Path to ansible-playbook executable (binary).
 - `check_mode` (Boolean) If 'true', playbook execution won't make any changes but only change predictions will be made.
 - `diff_mode` (Boolean) If 'true', when changing (small) files and templates, differences in those files will be shown. Recommended usage with 'check_mode'.
 - `extra_vars` (String) A string of json or yaml encoded map of additional variables as: { var-1 = {key-1 = value-1, key-2 = value-2, ... }, ... }.
+- `extra_vars_wo` (String, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) A string of json or yaml encoded map of additional variables that is never written to Terraform state. Requires Terraform 1.11 or later. Passed to ansible-playbook as a file rather than on the command line, so it is also absent from 'cmd'. Takes precedence over 'extra_vars' on conflicting keys. Because the value is absent from state, changing it produces no plan diff: set 'replayable' to true so the playbook re-runs on every apply, otherwise a changed value is not applied.
 - `force_handlers` (Boolean) If 'true', run handlers even if a task fails.
 - `ignore_playbook_failure` (Boolean) This parameter is good for testing. Set to 'true' if the desired playbook is meant to fail, but still want the resource to run successfully.
 - `inventory_groups` (Attributes List) (see [below for nested schema](#nestedatt--inventory_groups))
@@ -82,6 +95,7 @@ Optional:
 
 - `groups` (List of String) List of group names.
 - `variables` (String) yaml encoded map of variables.
+- `variables_wo` (String, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) yaml encoded map of variables that is never written to Terraform state. Requires Terraform 1.11 or later. Merged with 'variables' by Ansible, taking precedence on conflicting keys. Because the value is absent from state, changing it produces no plan diff: set 'replayable' to true so the playbook re-runs on every apply, otherwise a changed value is not applied.
 
 
 <a id="nestedatt--inventory_groups"></a>
@@ -95,6 +109,7 @@ Optional:
 
 - `children` (List of String) List of group names.
 - `variables` (String) yaml encoded map of variables.
+- `variables_wo` (String, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) yaml encoded map of variables that is never written to Terraform state. Requires Terraform 1.11 or later. Merged with 'variables' by Ansible, taking precedence on conflicting keys. Because the value is absent from state, changing it produces no plan diff: set 'replayable' to true so the playbook re-runs on every apply, otherwise a changed value is not applied.
 
 
 <a id="nestedatt--timeouts"></a>
