@@ -42,6 +42,11 @@ jobs:
         with:
           go-version-file: 'go.mod'
           cache: true
+      # Docs generation shells out to terraform: "terraform fmt" via go:generate
+      # and "terraform init" from tfplugindocs.
+      - uses: hashicorp/setup-terraform@633666f66e0061ca3b725c73b2ec20cd13a8fdd1 # v2.0.3
+        with:
+          terraform_wrapper: false
       - run: go generate ./...
       - name: git diff
         run: |

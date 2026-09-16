@@ -9,7 +9,8 @@ linters:
   enable:
     - durationcheck
     - errcheck
-    - exportloopref
+    # Replaced by copyloopvar: exportloopref is inactivated once go.mod targets Go >= 1.22.
+    - copyloopvar
     - forcetypeassert
     - godot
     - gofmt
