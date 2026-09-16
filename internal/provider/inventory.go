@@ -13,7 +13,19 @@ import (
 
 const defaultHostGroup = "ungrouped"
 
-func buildPlaybookInventory(inventoryDest string, hosts []inventoryHost, groups []inventoryGroup) string {
+// writeOnlyVars carries the write-only variable values for a playbook run. They
+// are read from the resource config rather than the plan, and are deliberately
+// kept out of the resource model so they can never be written to state.
+type writeOnlyVars struct {
+	// hosts maps a host name to its yaml encoded write-only variables.
+	hosts map[string]string
+	// groups maps a group name to its yaml encoded write-only variables.
+	groups map[string]string
+	// extraVars holds yaml encoded write-only variables for the whole play.
+	extraVars types.String
+}
+
+func buildPlaybookInventory(inventoryDest string, hosts []inventoryHost, groups []inventoryGroup, wo writeOnlyVars) string {
 	destinationDir, err := os.MkdirTemp("", inventoryDest)
 	if err != nil {
 		log.Fatalf("Fail to create temp inventory directory: %v", err)
@@ -48,16 +60,7 @@ func buildPlaybookInventory(inventoryDest string, hosts []inventoryHost, groups 
 				inventoryMap[g] = append(inventoryMap[g], hostName)
 			}
 		}
-		if !h.Variables.IsNull() {
-			err := os.MkdirAll(path.Join(destinationDir, "host_vars"), 0755)
-			if err != nil {
-				log.Fatalf("Fail to create host_vars dir: %v", err)
-			}
-			err = os.WriteFile(path.Join(destinationDir, "host_vars", h.Name.ValueString()), []byte(h.Variables.ValueString()), 0644)
-			if err != nil {
-				log.Fatalf("Fail to create host_vars file: %v", err)
-			}
-		}
+		writeVarsFiles(destinationDir, "host_vars", hostName, h.Variables, wo.hosts[hostName])
 	}
 	for _, g := range groups {
 		name := g.Name.ValueString() + ":children"
@@ -71,16 +74,8 @@ func buildPlaybookInventory(inventoryDest string, hosts []inventoryHost, groups 
 				inventoryMap[name] = append(inventoryMap[name], childName)
 			}
 		}
-		if !g.Variables.IsNull() {
-			err := os.MkdirAll(path.Join(destinationDir, "group_vars"), 0755)
-			if err != nil {
-				log.Fatalf("Fail to create group_vars dir: %v", err)
-			}
-			err = os.WriteFile(path.Join(destinationDir, "group_vars", g.Name.ValueString()), []byte(g.Variables.ValueString()), 0644)
-			if err != nil {
-				log.Fatalf("Fail to create group_vars file: %v", err)
-			}
-		}
+		groupName := g.Name.ValueString()
+		writeVarsFiles(destinationDir, "group_vars", groupName, g.Variables, wo.groups[groupName])
 	}
 
 	for k, v := range inventoryMap {
@@ -96,4 +91,95 @@ func buildPlaybookInventory(inventoryDest string, hosts []inventoryHost, groups 
 	}
 
 	return destinationDir
+}
+
+// writeVarsFiles writes the variables of a single inventory entry into
+// <destinationDir>/<varsDir>/<name>/. Ansible loads every file in an entry's
+// vars directory, which lets the plaintext and write-only values stay in
+// separate files so the provider never has to parse or merge yaml itself.
+// "vars_wo.yaml" sorts after "vars.yaml", so write-only values take precedence
+// on conflicting keys.
+func writeVarsFiles(destinationDir string, varsDir string, name string, variables types.String, writeOnly string) {
+	files := map[string]string{}
+	if !variables.IsNull() {
+		files["vars.yaml"] = variables.ValueString()
+	}
+
+	if writeOnly != "" {
+		files["vars_wo.yaml"] = writeOnly
+	}
+
+	if len(files) == 0 {
+		return
+	}
+
+	entryDir := path.Join(destinationDir, varsDir, name)
+
+	err := os.MkdirAll(entryDir, 0755)
+	if err != nil {
+		log.Fatalf("Fail to create %s dir for %s: %v", varsDir, name, err)
+	}
+
+	for fileName, content := range files {
+		err = os.WriteFile(path.Join(entryDir, fileName), []byte(content), 0600)
+		if err != nil {
+			log.Fatalf("Fail to create %s file %s for %s: %v", varsDir, fileName, name, err)
+		}
+	}
+}
+
+// writeExtraVarsFile writes yaml encoded write-only extra variables to a
+// private temporary file so the value never becomes part of the
+// ansible-playbook command line, which the provider stores in state as "cmd".
+// The returned cleanup removes the file, and should run as soon as the playbook
+// has finished.
+func writeExtraVarsFile(content string) (string, func()) {
+	file, err := os.CreateTemp("", "extra-vars-*.yaml")
+	if err != nil {
+		log.Fatalf("Fail to create write-only extra vars file: %v", err)
+	}
+
+	filePath := file.Name()
+	cleanup := func() {
+		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("Fail to remove write-only extra vars file %s: %v", filePath, err)
+		}
+	}
+
+	if _, err := file.WriteString(content); err != nil {
+		cleanup()
+		log.Fatalf("Fail to write write-only extra vars file: %v", err)
+	}
+
+	if err := file.Close(); err != nil {
+		cleanup()
+		log.Fatalf("Fail to close write-only extra vars file: %v", err)
+	}
+
+	return filePath, cleanup
+}
+
+// newWriteOnlyVars collects the write-only values out of a playbook decoded
+// from the resource config. Write-only attributes are null in both the plan and
+// the state, so the config is the only place they can be read from.
+func newWriteOnlyVars(cfg playbook) writeOnlyVars {
+	wo := writeOnlyVars{
+		hosts:     map[string]string{},
+		groups:    map[string]string{},
+		extraVars: cfg.ExtraVarsWO,
+	}
+
+	for _, h := range cfg.InventoryHosts {
+		if !h.VariablesWO.IsNull() {
+			wo.hosts[h.Name.ValueString()] = h.VariablesWO.ValueString()
+		}
+	}
+
+	for _, g := range cfg.InventoryGroups {
+		if !g.VariablesWO.IsNull() {
+			wo.groups[g.Name.ValueString()] = g.VariablesWO.ValueString()
+		}
+	}
+
+	return wo
 }

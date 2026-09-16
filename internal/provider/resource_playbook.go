@@ -29,6 +29,7 @@ type playbook struct {
 	DiffMode              types.Bool       `tfsdk:"diff_mode"`
 	ForceHandlers         types.Bool       `tfsdk:"force_handlers"`
 	ExtraVars             types.String     `tfsdk:"extra_vars"`
+	ExtraVarsWO           types.String     `tfsdk:"extra_vars_wo"`
 	ID                    types.String     `tfsdk:"id"`
 	Cmd                   types.String     `tfsdk:"cmd"`
 	TempInventoryDir      types.String     `tfsdk:"temp_inventory_dir"`
@@ -37,14 +38,16 @@ type playbook struct {
 	Timeouts              timeouts.Value   `tfsdk:"timeouts"`
 }
 type inventoryHost struct {
-	Name      types.String   `tfsdk:"name"`
-	Groups    []types.String `tfsdk:"groups"`
-	Variables types.String   `tfsdk:"variables"`
+	Name        types.String   `tfsdk:"name"`
+	Groups      []types.String `tfsdk:"groups"`
+	Variables   types.String   `tfsdk:"variables"`
+	VariablesWO types.String   `tfsdk:"variables_wo"`
 }
 type inventoryGroup struct {
-	Name      types.String   `tfsdk:"name"`
-	Children  []types.String `tfsdk:"children"`
-	Variables types.String   `tfsdk:"variables"`
+	Name        types.String   `tfsdk:"name"`
+	Children    []types.String `tfsdk:"children"`
+	Variables   types.String   `tfsdk:"variables"`
+	VariablesWO types.String   `tfsdk:"variables_wo"`
 }
 
 type playbookResource struct{}
@@ -85,6 +88,16 @@ func (p *playbookResource) Schema(ctx context.Context, _ resource.SchemaRequest,
 							Optional:    true,
 							Description: "yaml encoded map of variables.",
 						},
+						"variables_wo": schema.StringAttribute{
+							Optional:  true,
+							WriteOnly: true,
+							Description: "yaml encoded map of variables that is never written to Terraform state. " +
+								"Requires Terraform 1.11 or later. " +
+								"Merged with 'variables' by Ansible, taking precedence on conflicting keys. " +
+								"Because the value is absent from state, changing it produces no plan diff: " +
+								"set 'replayable' to true so the playbook re-runs on every apply, otherwise a " +
+								"changed value is not applied.",
+						},
 					},
 				},
 			},
@@ -120,6 +133,16 @@ func (p *playbookResource) Schema(ctx context.Context, _ resource.SchemaRequest,
 						"variables": schema.StringAttribute{
 							Optional:    true,
 							Description: "yaml encoded map of variables.",
+						},
+						"variables_wo": schema.StringAttribute{
+							Optional:  true,
+							WriteOnly: true,
+							Description: "yaml encoded map of variables that is never written to Terraform state. " +
+								"Requires Terraform 1.11 or later. " +
+								"Merged with 'variables' by Ansible, taking precedence on conflicting keys. " +
+								"Because the value is absent from state, changing it produces no plan diff: " +
+								"set 'replayable' to true so the playbook re-runs on every apply, otherwise a " +
+								"changed value is not applied.",
 						},
 					},
 				},
@@ -182,6 +205,17 @@ func (p *playbookResource) Schema(ctx context.Context, _ resource.SchemaRequest,
 				Description: "A string of json or yaml encoded map of additional variables as: { var-1 = {key-1 = value-1, key-2 = value-2, ... }, ... }.",
 			},
 
+			"extra_vars_wo": schema.StringAttribute{
+				Optional:  true,
+				WriteOnly: true,
+				Description: "A string of json or yaml encoded map of additional variables that is never " +
+					"written to Terraform state. Requires Terraform 1.11 or later. Passed to " +
+					"ansible-playbook as a file rather than on the command line, so it is also absent " +
+					"from 'cmd'. Takes precedence over 'extra_vars' on conflicting keys. Because the " +
+					"value is absent from state, changing it produces no plan diff: set 'replayable' to " +
+					"true so the playbook re-runs on every apply, otherwise a changed value is not applied.",
+			},
+
 			// computed
 			"id": schema.StringAttribute{
 				Computed: true,
@@ -234,8 +268,20 @@ func (pr *playbookResource) Create(ctx context.Context, req resource.CreateReque
 	ctx, cancel := context.WithTimeout(ctx, createTimeout)
 	defer cancel()
 
+	// Write-only values are null in the plan, so they have to be read from the
+	// config. They are kept out of p so they can never reach state.
+	var cfg playbook
+
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	wo := newWriteOnlyVars(cfg)
+
 	p.ID = types.StringValue(time.Now().String())
-	p.runPlaybook(ctx)
+	p.runPlaybook(ctx, wo)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &p)...)
 }
@@ -285,8 +331,20 @@ func (pr *playbookResource) Update(ctx context.Context, req resource.UpdateReque
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
 
+	// Write-only values are null in the plan, so they have to be read from the
+	// config. They are kept out of p so they can never reach state.
+	var cfg playbook
+
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	wo := newWriteOnlyVars(cfg)
+
 	p.ID = types.StringValue(time.Now().String())
-	p.runPlaybook(ctx)
+	p.runPlaybook(ctx, wo)
 
 	// persist the values to state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &p)...)
@@ -304,48 +362,23 @@ func (pr *playbookResource) Delete(ctx context.Context, req resource.DeleteReque
 	RemoveDir(p.TempInventoryDir.ValueString())
 }
 
-func (p *playbook) runPlaybook(ctx context.Context) {
-	args := []string{}
-
+func (p *playbook) runPlaybook(ctx context.Context, wo writeOnlyVars) {
 	if p.TempInventoryDir.IsNull() || p.TempInventoryDir.ValueString() == "" {
-		p.TempInventoryDir = types.StringValue(buildPlaybookInventory("inventory-*", p.InventoryHosts, p.InventoryGroups))
+		p.TempInventoryDir = types.StringValue(buildPlaybookInventory("inventory-*", p.InventoryHosts, p.InventoryGroups, wo))
 	}
 	log.Printf("Temp Inventory Dir: %s", p.TempInventoryDir.ValueString())
-	args = append(args, "-i", p.TempInventoryDir.ValueString())
 
-	verbose := CreateVerboseSwitch(int(p.Verbosity.ValueInt64()))
-	if verbose != "" {
-		args = append(args, verbose)
+	extraVarsWriteOnlyFile := ""
+
+	if !wo.extraVars.IsNull() {
+		filePath, cleanup := writeExtraVarsFile(wo.extraVars.ValueString())
+		defer cleanup()
+
+		extraVarsWriteOnlyFile = filePath
 	}
 
-	if p.ForceHandlers.ValueBool() {
-		args = append(args, "--force-handlers")
-	}
+	args := p.buildPlaybookArgs(extraVarsWriteOnlyFile)
 
-	if len(p.Tags) > 0 {
-		tmpTags := []string{}
-
-		for _, tag := range p.Tags {
-			tmpTags = append(tmpTags, tag.ValueString())
-		}
-
-		tagsStr := strings.Join(tmpTags, ",")
-		args = append(args, "--tags", tagsStr)
-	}
-
-	if p.CheckMode.ValueBool() {
-		args = append(args, "--check")
-	}
-
-	if p.DiffMode.ValueBool() {
-		args = append(args, "--diff")
-	}
-
-	if !p.ExtraVars.IsNull() {
-		args = append(args, "-e", p.ExtraVars.String())
-	}
-
-	args = append(args, p.Playbook.ValueString())
 	// set up the args
 	log.Print("[ANSIBLE ARGS]:")
 	log.Print(args)
@@ -377,4 +410,49 @@ func (p *playbook) runPlaybook(ctx context.Context) {
 	if err != nil {
 		log.Printf("LOG [ansible-playbook]: didn't wait for playbook to execute: %v", err)
 	}
+}
+
+// buildPlaybookArgs assembles the ansible-playbook command line. When
+// extraVarsWriteOnlyFile is not empty it is passed as an "-e @file" argument.
+func (p *playbook) buildPlaybookArgs(extraVarsWriteOnlyFile string) []string {
+	args := []string{"-i", p.TempInventoryDir.ValueString()}
+
+	verbose := CreateVerboseSwitch(int(p.Verbosity.ValueInt64()))
+	if verbose != "" {
+		args = append(args, verbose)
+	}
+
+	if p.ForceHandlers.ValueBool() {
+		args = append(args, "--force-handlers")
+	}
+
+	if len(p.Tags) > 0 {
+		tmpTags := []string{}
+
+		for _, tag := range p.Tags {
+			tmpTags = append(tmpTags, tag.ValueString())
+		}
+
+		tagsStr := strings.Join(tmpTags, ",")
+		args = append(args, "--tags", tagsStr)
+	}
+
+	if p.CheckMode.ValueBool() {
+		args = append(args, "--check")
+	}
+
+	if p.DiffMode.ValueBool() {
+		args = append(args, "--diff")
+	}
+
+	if !p.ExtraVars.IsNull() {
+		args = append(args, "-e", p.ExtraVars.ValueString())
+	}
+
+	// Passed last so write-only values win over "extra_vars" on conflicting keys.
+	if extraVarsWriteOnlyFile != "" {
+		args = append(args, "-e", "@"+extraVarsWriteOnlyFile)
+	}
+
+	return append(args, p.Playbook.ValueString())
 }

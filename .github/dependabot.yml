@@ -6,3 +6,9 @@ updates:
     directory: '/'
     schedule:
       interval: 'daily'
+  # Without this the workflow actions drift until they break; every action in
+  # this repo had gone stale enough to hit the Node 20 deprecation.
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
